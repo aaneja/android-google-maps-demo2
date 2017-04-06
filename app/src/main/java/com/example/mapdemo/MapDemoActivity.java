@@ -11,18 +11,31 @@ import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
+import com.google.android.gms.maps.model.BitmapDescriptor;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.Marker;
+import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.maps.android.ui.IconGenerator;
+import com.parse.ParsePush;
 
 import android.app.Activity;
 import android.app.Dialog;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.IntentSender;
+import android.graphics.Bitmap;
 import android.location.Location;
 import android.os.Bundle;
 import android.support.v4.app.DialogFragment;
+import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import permissions.dispatcher.NeedsPermission;
@@ -32,8 +45,12 @@ import permissions.dispatcher.RuntimePermissions;
 public class MapDemoActivity extends AppCompatActivity implements
 		GoogleApiClient.ConnectionCallbacks,
 		GoogleApiClient.OnConnectionFailedListener,
-		LocationListener {
+		LocationListener,
+		GoogleMap.OnMapLongClickListener,
+		GoogleMap.OnMarkerDragListener,
+		MarkerUpdatesReceiver.PushInterface {
 
+	private static final String CHANNEL_NAME = "android-2017";
 	private SupportMapFragment mapFragment;
 	private GoogleMap map;
 	private GoogleApiClient mGoogleApiClient;
@@ -41,11 +58,13 @@ public class MapDemoActivity extends AppCompatActivity implements
 	private long UPDATE_INTERVAL = 60000;  /* 60 secs */
 	private long FASTEST_INTERVAL = 5000; /* 5 secs */
 
+
 	/*
 	 * Define a request code to send to Google Play services This code is
 	 * returned in Activity.onActivityResult
 	 */
 	private final static int CONNECTION_FAILURE_RESOLUTION_REQUEST = 9000;
+	private final PushUtilTracker pushUtilTracker = new PushUtilTracker();
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -68,6 +87,11 @@ public class MapDemoActivity extends AppCompatActivity implements
 			Toast.makeText(this, "Error - Map Fragment was null!!", Toast.LENGTH_SHORT).show();
 		}
 
+//		final String CHANNEL_NAME = "";
+		ParsePush.subscribeInBackground(CHANNEL_NAME);
+
+		IntentFilter intentFilter = new IntentFilter("com.parse.push.intent.RECEIVE");
+		registerReceiver(new MarkerUpdatesReceiver(this), intentFilter);
 	}
 
     protected void loadMap(GoogleMap googleMap) {
@@ -76,7 +100,11 @@ public class MapDemoActivity extends AppCompatActivity implements
             // Map is ready
             Toast.makeText(this, "Map Fragment was loaded properly!", Toast.LENGTH_SHORT).show();
 			MapDemoActivityPermissionsDispatcher.getMyLocationWithCheck(this);
-        } else {
+			map.setOnMapLongClickListener(this);
+			map.setOnMarkerDragListener(this);
+
+
+		} else {
             Toast.makeText(this, "Error - Map was null!!", Toast.LENGTH_SHORT).show();
         }
     }
@@ -255,6 +283,27 @@ public class MapDemoActivity extends AppCompatActivity implements
 		}
 	}
 
+	@Override
+	public void onMarkerDragStart(Marker marker) {
+
+	}
+
+	@Override
+	public void onMarkerDrag(Marker marker) {
+
+	}
+
+	@Override
+	public void onMarkerDragEnd(Marker marker) {
+		PushUtil.sendPushNotification(marker,CHANNEL_NAME);
+	}
+
+	@Override
+	public void onMarkerUpdate(PushRequest pushRequest) {
+		Toast.makeText(MapDemoActivity.this,"Got a Parse Push : InstallationId: "+pushRequest.installationId+" Location : Lat : "+ pushRequest.mapLocation.latitude+ " Long:" + pushRequest.mapLocation.longitude, Toast.LENGTH_LONG ).show();
+		pushUtilTracker.handleMarkerUpdates(this,pushRequest,map);
+	}
+
 	// Define a DialogFragment that displays the error dialog
 	public static class ErrorDialogFragment extends DialogFragment {
 
@@ -278,5 +327,77 @@ public class MapDemoActivity extends AppCompatActivity implements
 			return mDialog;
 		}
 	}
+
+	@Override
+	public void onMapLongClick(LatLng point) {
+		Toast.makeText(getApplicationContext(), "Long Press", Toast.LENGTH_LONG).show();
+		// Custom code here...
+		// Display the alert dialog
+//		PushTest.sendPushTest();
+		showAlertDialogForPoint(point);
+	}
+
+	// Display the alert that adds the marker
+	private void showAlertDialogForPoint(final LatLng point) {
+		// inflate message_item.xml view
+		View messageView = LayoutInflater.from(MapDemoActivity.this).
+				inflate(R.layout.message_item, null);
+		// Create alert dialog builder
+		AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(this);
+		// set message_item.xml to AlertDialog builder
+		alertDialogBuilder.setView(messageView);
+
+		// Create alert dialog
+		final AlertDialog alertDialog = alertDialogBuilder.create();
+
+		// Configure dialog button (OK)
+		alertDialog.setButton(DialogInterface.BUTTON_POSITIVE, "OK",
+				new DialogInterface.OnClickListener() {
+					@Override
+					public void onClick(DialogInterface dialog, int which) {
+						String title = ((EditText) alertDialog.findViewById(R.id.etTitle)).
+								getText().toString();
+						String snippet = ((EditText) alertDialog.findViewById(R.id.etSnippet)).
+								getText().toString();
+						CreateAndSetMarker(title,snippet, point);
+
+					}
+				});
+
+		// Configure dialog button (Cancel)
+		alertDialog.setButton(DialogInterface.BUTTON_NEGATIVE, "Cancel",
+				new DialogInterface.OnClickListener() {
+					public void onClick(DialogInterface dialog, int id) { dialog.cancel(); }
+				});
+
+		// Display the dialog
+		alertDialog.show();
+	}
+
+	private void CreateAndSetMarker(String title, String snippet, LatLng point) {
+		// Define color of marker icon
+		BitmapDescriptor defaultMarker =
+                BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN);
+		// Extract content from alert dialog
+
+
+		IconGenerator iconGenerator = new IconGenerator(MapDemoActivity.this);
+		// Possible color options:
+		// STYLE_WHITE, STYLE_RED, STYLE_BLUE, STYLE_GREEN, STYLE_PURPLE, STYLE_ORANGE
+		iconGenerator.setStyle(IconGenerator.STYLE_GREEN);
+		// Swap text here to live inside speech bubble
+		Bitmap bitmap = iconGenerator.makeIcon(title);
+		// Use BitmapDescriptorFactory to create the marker
+		BitmapDescriptor icon = BitmapDescriptorFactory.fromBitmap(bitmap);
+		// Creates and adds marker to the map
+		Marker marker = map.addMarker(new MarkerOptions()
+                .position(point)
+                .title(title)
+                .snippet(snippet)
+                .icon(icon));
+		marker.setDraggable(true);
+		PushUtil.sendPushNotification(marker,CHANNEL_NAME);
+	}
+
 
 }
